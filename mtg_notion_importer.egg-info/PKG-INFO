@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: mtg-notion-importer
+Version: 1.1.0
+Summary: Scryfall → Notion importer with UPSERT and Streamlit UI
+Author: you
+Requires-Python: >=3.9
+Requires-Dist: requests>=2.31.0
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: pandas>=2.1.0

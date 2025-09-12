@@ -1,0 +1,2 @@
+[console_scripts]
+mtg-importer = mtg_importer.cli:main

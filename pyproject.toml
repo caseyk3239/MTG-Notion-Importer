@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68","wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mtg-notion-importer"
+version = "1.1.0"
+description = "Scryfall → Notion importer with UPSERT and Streamlit UI"
+authors = [{name="you"}]
+requires-python = ">=3.9"
+dependencies = [
+  "requests>=2.31.0",
+  "python-dotenv>=1.0.1",
+  "pandas>=2.1.0",
+]
+
+[project.scripts]
+mtg-importer = "mtg_importer.cli:main"
