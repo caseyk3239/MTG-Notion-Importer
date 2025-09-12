@@ -15,29 +15,6 @@ class NotionClient:
     def get_parent(self, page_id: str):
         return requests.get(f"{NOTION}/pages/{page_id}", headers=self.h, timeout=30)
 
-    def upload_images(self, urls: List[str]) -> List[Dict[str, Any]]:
-        """Download each image URL and upload it to Notion as a file.
-
-        Returns a list of Notion file objects suitable for the "files" property."""
-        files: List[Dict[str, Any]] = []
-        for idx, url in enumerate(urls or []):
-            try:
-                resp = requests.get(url, timeout=60)
-                resp.raise_for_status()
-                name = f"image_{idx}.jpg"
-                up_headers = {k: v for k, v in self.h.items() if k != "Content-Type"}
-                upload = requests.post(f"{NOTION}/files", headers=up_headers, files={"file": (name, resp.content)}, timeout=60)
-                upload.raise_for_status()
-                info = upload.json().get("file", {})
-                files.append({
-                    "type": "file",
-                    "name": info.get("name", name),
-                    "file": {"url": info.get("url"), "expiry_time": info.get("expiry_time")}
-                })
-            except Exception:
-                continue
-        return files
-
     def search_db_by_title(self, title: str) -> Optional[Dict[str, Any]]:
         body = {"query": title, "filter": {"property": "object", "value": "database"}}
         r = requests.post(f"{NOTION}/search", headers=self.h, data=json.dumps(body), timeout=60); r.raise_for_status()

@@ -7,13 +7,13 @@ from .overrides import load_overrides, apply_overrides
 
 def _ts(): return time.strftime("[%Y-%m-%d %H:%M:%S]")
 
-def build_props_for_create(rec: dict, title_prop: str, title_text: str, notion: NotionClient) -> Dict[str, Any]:
+def build_props_for_create(rec: dict, title_prop: str, title_text: str) -> Dict[str, Any]:
     def rt(v): return {"rich_text":[{"type":"text","text":{"content":v}}]} if v else {"rich_text":[]}
     def sel(v): return {"select":{"name":v}} if v else {"select":None}
     def ms(vs): return {"multi_select":[{"name":x} for x in (vs or [])]}
     def num(n): return {"number": float(n) if n is not None else None}
     def url(v): return {"url": v or None}
-    files = notion.upload_images(rec.get("image_urls"))
+    files = [{"type":"external","name":"image","external":{"url":u}} for u in (rec.get("image_urls") or [])]
     return {
         title_prop: {"title":[{"type":"text","text":{"content": title_text}}]},
         "Set": sel(rec.get("set")),
@@ -37,18 +37,16 @@ def build_props_for_create(rec: dict, title_prop: str, title_text: str, notion: 
         "Image": {"files": files},
     }
 
-def build_props_for_update(title_prop: str, title_text: str, rec: dict, notion: NotionClient) -> Dict[str, Any]:
+def build_props_for_update(title_prop: str, title_text: str, rec: dict) -> Dict[str, Any]:
     def ms(vs): return {"multi_select":[{"name":x} for x in (vs or [])]}
     def rt(v): return {"rich_text":[{"type":"text","text":{"content":v}}]} if v else {"rich_text":[]}
     def num(n): return {"number": float(n) if n is not None else None}
-    files = notion.upload_images(rec.get("image_urls"))
     return {
         title_prop: {"title":[{"type":"text","text":{"content": title_text}}]},
         "Procurement Method": ms(rec.get("procurement") or []),
         "Oracle Name": rt(rec.get("oracle_raw","")),
         "FF Name": rt(rec.get("ff_raw","")),
         "CN Sort": num(rec.get("cn_sort")),
-        "Image": {"files": files},
     }
 
 def cmd_import(args):
@@ -93,7 +91,7 @@ def cmd_import(args):
                             previews.append(f'UPDATE {key}: "{title_text}" | methods={rec.get("procurement")}')
                         updated += 1
                     else:
-                        props = build_props_for_update(title_prop, title_text, rec, notion)
+                        props = build_props_for_update(title_prop, title_text, rec)
                         notion.update_card_minimal(existing["id"], props)
                         updated += 1
                 else:
@@ -102,7 +100,7 @@ def cmd_import(args):
                             previews.append(f'CREATE {key}: "{title_text}" | methods={rec.get("procurement")}')
                         created += 1
                     else:
-                        props = build_props_for_create(rec, title_prop, title_text, notion)
+                        props = build_props_for_create(rec, title_prop, title_text)
                         notion.create_card_page(db["id"], props)
                         created += 1
             except Exception as e:
