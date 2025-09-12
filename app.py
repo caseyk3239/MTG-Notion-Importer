@@ -15,14 +15,14 @@ st.set_page_config(page_title="MTG Notion Importer", page_icon="🗂️", layout
 st.title("MTG – Notion Importer (Shared DB)")
 st.caption("UPSERT into one shared database. Existing pages: minimal update (Title, Procurement, Oracle/FF names, CN Sort). New pages: full create.")
 
-def props_create(rec: Dict[str, Any], title_prop: str, title_text: str) -> Dict[str, Any]:
+def props_create(notion: NotionClient, rec: Dict[str, Any], title_prop: str, title_text: str) -> Dict[str, Any]:
     def rt(v): return {"rich_text":[{"type":"text","text":{"content":v}}]} if v else {"rich_text":[]}
     def sel(v): return {"select":{"name":v}} if v else {"select":None}
     def ms(vs): return {"multi_select":[{"name":x} for x in (vs or [])]}
     def num(n): return {"number": float(n) if n is not None else None}
     def url(v): return {"url": v or None}
-    files = [{"type":"external","name":"image","external":{"url":u}} for u in (rec.get("image_urls") or [])]
-    return {
+    files = notion.upload_images(rec.get("image_urls"))
+    props = {
         title_prop: {"title":[{"type":"text","text":{"content": title_text}}]},
         "Set": sel(rec.get("set")),
         "Collector #": rt(rec.get("collector_number","")),
@@ -42,20 +42,26 @@ def props_create(rec: Dict[str, Any], title_prop: str, title_text: str) -> Dict[
         "Oracle Name": rt(rec.get("oracle_raw","")),
         "FF Name": rt(rec.get("ff_raw","")),
         "CN Sort": num(rec.get("cn_sort")),
-        "Image": {"files": files},
     }
+    if files:
+        props["Image"] = {"files": files}
+    return props
 
-def props_update(title_prop: str, title_text: str, rec: Dict[str, Any]) -> Dict[str, Any]:
+def props_update(notion: NotionClient, title_prop: str, title_text: str, rec: Dict[str, Any]) -> Dict[str, Any]:
     def ms(vs): return {"multi_select":[{"name":x} for x in (vs or [])]}
     def rt(v): return {"rich_text":[{"type":"text","text":{"content":v}}]} if v else {"rich_text":[]}
     def num(n): return {"number": float(n) if n is not None else None}
-    return {
+    files = notion.upload_images(rec.get("image_urls"))
+    props = {
         title_prop: {"title":[{"type":"text","text":{"content": title_text}}]},
         "Procurement Method": ms(rec.get("procurement") or []),
         "Oracle Name": rt(rec.get("oracle_raw","")),
         "FF Name": rt(rec.get("ff_raw","")),
         "CN Sort": num(rec.get("cn_sort")),
     }
+    if files:
+        props["Image"] = {"files": files}
+    return props
 
 def ensure_db(notion: NotionClient, parent_id: str, title: str):
     st.write(f"Looking for database titled “{title}”…")
@@ -116,14 +122,14 @@ with tab:
                         existing = notion.query_by_card_id(db["id"], rec["id"])
                         if existing:
                             if update_existing:
-                                notion.update_card_minimal(existing["id"], props_update(title_prop, new_title, rec))
+                                notion.update_card_minimal(existing["id"], props_update(notion, title_prop, new_title, rec))
                                 updated += 1
                                 if len(sample) < 10:
                                     sample.append(f'{u}-{rec.get("collector_number","?")}: → {new_title}')
                             else:
                                 skipped += 1
                         else:
-                            notion.create_card_page(db["id"], props_create(rec, title_prop, new_title))
+                            notion.create_card_page(db["id"], props_create(notion, rec, title_prop, new_title))
                             created += 1
                     except Exception as e:
                         failed += 1
