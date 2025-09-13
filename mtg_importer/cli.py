@@ -1,7 +1,7 @@
 import argparse, sys, os, time, getpass, json
 from typing import List, Dict, Any
 from .notion_api import NotionClient
-from .scry import fetch_set, normalize
+from .scry import fetch_set, normalize, search_prints
 from .util import format_title, mask_token
 from .overrides import load_overrides, apply_overrides
 
@@ -69,6 +69,60 @@ def build_props_for_update(title_prop: str, title_text: str, rec: dict, notion: 
     if files:
         props["Image"] = {"files": files}
     return props
+
+
+def cmd_add_card(args):
+    token = args.token or os.environ.get("NOTION_TOKEN") or getpass.getpass("Notion token (ntn_*): ").strip()
+    print(_ts(), "Starting add-card — parent=", args.parent, ", token=", mask_token(token), ", name=", args.name)
+    notion = NotionClient(token)
+    if not notion.verify_token():
+        print(_ts(), "Auth failed (401). Check your token & workspace."); sys.exit(2)
+    r = notion.get_parent(args.parent)
+    if r.status_code == 403:
+        print(_ts(), "403: Invite the integration to the parent page (••• → Add connections)."); sys.exit(3)
+    if r.status_code >= 300:
+        print(_ts(), "Failed to open parent page:", r.status_code, r.text); sys.exit(4)
+
+    db = notion.search_db_by_title(args.db_title)
+    if not db:
+        print(_ts(), "Creating database:", args.db_title)
+        db = notion.create_database(args.parent, args.db_title)
+    notion.ensure_columns(db["id"])
+    title_prop = notion.get_title_property_name(db["id"])
+    print(_ts(), "Using DB:", db["id"], "title property:", title_prop)
+
+    prints = search_prints(args.name, args.set)
+    if not prints:
+        print(_ts(), "No prints found for", args.name)
+        return
+    for idx, card in enumerate(prints, start=1):
+        rec = normalize(card)
+        img = (rec.get("image_urls") or [""])[0]
+        print(f"{idx}) {rec.get('set')} #{rec.get('collector_number')} {rec.get('rarity')} {img}")
+    sel = input("Choose a print number to add (blank to cancel): ").strip()
+    if not sel.isdigit():
+        print(_ts(), "Cancelled")
+        return
+    choice = int(sel)
+    if choice < 1 or choice > len(prints):
+        print(_ts(), "Invalid selection")
+        return
+    rec = normalize(prints[choice - 1])
+    title_text = format_title(rec["oracle_raw"], rec["ff_raw"], "Oracle — FF")
+    existing = notion.query_by_card_id(db["id"], rec["id"])
+    if existing:
+        print(_ts(), "Card already exists in database")
+        return
+    if args.dry_run:
+        print(_ts(), "Dry run: would create", title_text)
+        return
+    confirm = input(f"Add {title_text}? [y/N]: ").strip().lower()
+    if not confirm.startswith("y"):
+        print(_ts(), "Cancelled")
+        return
+    props = build_props_for_create(rec, title_prop, title_text, notion)
+    notion.create_card_page(db["id"], props)
+    print(_ts(), "Added", title_text)
 
 def cmd_import(args):
     sets = [s.lower() for s in (args.sets or [])]
@@ -148,6 +202,16 @@ def build_parser():
     ip.add_argument("--dry-run", action="store_true", help="No writes; show planned changes")
     ip.add_argument("--no-overrides", action="store_true", help="Ignore overrides.json")
     ip.set_defaults(func=cmd_import)
+
+    ap = sub.add_parser("add-card", help="Search, preview, and add a single card")
+    ap.add_argument("name", help="Exact card name")
+    ap.add_argument("--set", help="Restrict to a set code")
+    ap.add_argument("--db-title", required=True, help='Notion database title, e.g. "MTG – Cards"')
+    ap.add_argument("--parent", required=True, help="Notion parent page ID")
+    ap.add_argument("--token", help="Notion token (ntn_*)")
+    ap.add_argument("--dry-run", action="store_true", help="No writes; show planned changes")
+    ap.set_defaults(func=cmd_add_card)
+
     return p
 
 def main(argv: List[str] | None = None):
