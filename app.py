@@ -163,49 +163,64 @@ with tab_sets:
             st.info(f"Database: {db.get('url')}")
 
 with tab_single:
-    st.subheader("Add single card")
+    st.subheader("Add cards by search")
+    # --- Part 1: search Scryfall ---
     with st.form("search_card_form"):
-        s_token = st.text_input("Notion API token", type="password", value=st.session_state.get("s_token", ""), help="ntn_*")
-        s_parent = st.text_input("Parent page ID", value=st.session_state.get("s_parent", "250e0945-9e39-80fc-a408-c7d09ab28763"))
-        s_db = st.text_input("Database title", value=st.session_state.get("s_db", "MTG – Cards"))
         card_name = st.text_input("Card name", value=st.session_state.get("card_name", ""))
         card_set = st.text_input("Set code (optional)", value=st.session_state.get("card_set", ""))
-        s_title_style = st.selectbox("Title style", ["Oracle — FF","FF — Oracle","Oracle only"], index=0)
         search_submitted = st.form_submit_button("Search prints")
 
     if search_submitted:
-        st.session_state["s_token"] = s_token
-        st.session_state["s_parent"] = s_parent
-        st.session_state["s_db"] = s_db
         st.session_state["card_name"] = card_name
         st.session_state["card_set"] = card_set
-        st.session_state["s_title_style"] = s_title_style
-        notion = NotionClient(s_token)
-        if verify(notion, s_parent):
-            db = ensure_db(notion, s_parent, s_db)
-            st.session_state["s_db_id"] = db["id"]
-            st.session_state["s_title_prop"] = notion.get_title_property_name(db["id"])
-            prints = [normalize(p) for p in search_prints(card_name, card_set or None)]
-            st.session_state["prints"] = prints
+        prints = [normalize(p) for p in search_prints(card_name, card_set or None)]
+        st.session_state["prints"] = prints
+        # clear previous selections
+        for rec in prints:
+            st.session_state.pop(f"sel_{rec['id']}", None)
 
     prints = st.session_state.get("prints")
     if prints:
-        options = [f"{rec.get('set')} #{rec.get('collector_number')} {rec.get('rarity')}" for rec in prints]
-        choice = st.selectbox("Choose a print", list(range(len(prints))), format_func=lambda i: options[i])
-        img = (prints[choice].get("image_urls") or [""])[0]
-        if img:
-            st.image(img)
-        if st.button("Add card to Notion"):
-            notion = NotionClient(st.session_state.get("s_token"))
-            db_id = st.session_state.get("s_db_id")
-            title_prop = st.session_state.get("s_title_prop")
-            rec = prints[choice]
-            existing = notion.query_by_card_id(db_id, rec["id"])
-            if existing:
-                st.warning("Card already exists in database")
-            else:
-                title_text = format_title(rec.get("oracle_raw",""), rec.get("ff_raw",""), st.session_state.get("s_title_style", "Oracle — FF"))
-                props = props_create(notion, rec, title_prop, title_text)
-                notion.create_card_page(db_id, props)
-                st.success(f"Added {title_text}")
-                del st.session_state["prints"]
+        st.write("Select one or more prints to add:")
+        cols = st.columns(3)
+        for idx, rec in enumerate(prints):
+            col = cols[idx % 3]
+            with col:
+                img = (rec.get("image_urls") or [""])[0]
+                if img:
+                    st.image(img, use_column_width=True)
+                st.checkbox(f"{rec.get('set')} #{rec.get('collector_number')} {rec.get('rarity')}", key=f"sel_{rec['id']}")
+
+        selected = [rec for rec in prints if st.session_state.get(f"sel_{rec['id']}")]
+        if selected:
+            # --- Part 2: Notion credentials and batch add ---
+            with st.form("add_selected_form"):
+                s_token = st.text_input("Notion API token", type="password", value=st.session_state.get("s_token", ""), help="ntn_*")
+                s_parent = st.text_input("Parent page ID", value=st.session_state.get("s_parent", "250e0945-9e39-80fc-a408-c7d09ab28763"))
+                s_db = st.text_input("Database title", value=st.session_state.get("s_db", "MTG – Cards"))
+                s_title_style = st.selectbox("Title style", ["Oracle — FF","FF — Oracle","Oracle only"], index=0)
+                add_submitted = st.form_submit_button(f"Add {len(selected)} card(s) to Notion")
+
+            if add_submitted:
+                st.session_state["s_token"] = s_token
+                st.session_state["s_parent"] = s_parent
+                st.session_state["s_db"] = s_db
+                notion = NotionClient(s_token)
+                if verify(notion, s_parent):
+                    db = ensure_db(notion, s_parent, s_db)
+                    title_prop = notion.get_title_property_name(db["id"])
+                    added = skipped = 0
+                    for rec in selected:
+                        existing = notion.query_by_card_id(db["id"], rec["id"])
+                        if existing:
+                            skipped += 1
+                            continue
+                        title_text = format_title(rec.get("oracle_raw",""), rec.get("ff_raw",""), s_title_style)
+                        props = props_create(notion, rec, title_prop, title_text)
+                        notion.create_card_page(db["id"], props)
+                        added += 1
+                    st.success(f"Added {added} card(s); skipped {skipped} existing")
+                    # reset state after adding
+                    del st.session_state["prints"]
+                    for rec in selected:
+                        st.session_state.pop(f"sel_{rec['id']}", None)

@@ -36,8 +36,9 @@ You can insert a single card into your Notion database from the web app or the t
 
 ### Web app
 Run `streamlit run mtg_importer/app.py` and open the **Add single card** tab.
-Search for a card name (optionally restricting to a set), preview the prints and
-their images, then insert the selected print into your database.
+Search for a card name (optionally restricting to a set) to preview all matching
+prints and their images. Tick the prints you want, then enter your Notion token,
+parent page and database title to batch-add the selected cards.
 
 ### Command line
 ```bash
