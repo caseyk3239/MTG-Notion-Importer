@@ -6,6 +6,7 @@ if PARENT not in sys.path: sys.path.insert(0, PARENT)
 
 import streamlit as st
 from typing import Dict, Any
+import json
 
 from mtg_importer.notion_api import NotionClient
 from mtg_importer.scry import fetch_set, normalize
@@ -21,12 +22,19 @@ def props_create(notion: NotionClient, rec: Dict[str, Any], title_prop: str, tit
     def ms(vs): return {"multi_select":[{"name":x} for x in (vs or [])]}
     def num(n): return {"number": float(n) if n is not None else None}
     def url(v): return {"url": v or None}
+    def date(v): return {"date": {"start": v}} if v else {"date": None}
     files = notion.upload_images(rec.get("image_urls"))
     props = {
         title_prop: {"title":[{"type":"text","text":{"content": title_text}}]},
         "Set": sel(rec.get("set")),
         "Collector #": rt(rec.get("collector_number","")),
         "Rarity": sel(rec.get("rarity","")),
+        "Language": sel(rec.get("lang")),
+        "Released At": date(rec.get("released_at")),
+        "Layout": sel(rec.get("layout")),
+        "Artist": rt(rec.get("artist","")),
+        "Prices": rt(json.dumps(rec.get("prices")) if rec.get("prices") else ""),
+        "Legalities": rt(json.dumps(rec.get("legalities")) if rec.get("legalities") else ""),
         "Mana Cost": rt(rec.get("mana_cost","")),
         "CMC": num(rec.get("cmc")),
         "Type Line": rt(rec.get("type_line","")),
@@ -51,9 +59,17 @@ def props_update(notion: NotionClient, title_prop: str, title_text: str, rec: Di
     def ms(vs): return {"multi_select":[{"name":x} for x in (vs or [])]}
     def rt(v): return {"rich_text":[{"type":"text","text":{"content":v}}]} if v else {"rich_text":[]}
     def num(n): return {"number": float(n) if n is not None else None}
+    def sel(v): return {"select":{"name":v}} if v else {"select":None}
+    def date(v): return {"date": {"start": v}} if v else {"date": None}
     files = notion.upload_images(rec.get("image_urls"))
     props = {
         title_prop: {"title":[{"type":"text","text":{"content": title_text}}]},
+        "Language": sel(rec.get("lang")),
+        "Released At": date(rec.get("released_at")),
+        "Layout": sel(rec.get("layout")),
+        "Artist": rt(rec.get("artist","")),
+        "Prices": rt(json.dumps(rec.get("prices")) if rec.get("prices") else ""),
+        "Legalities": rt(json.dumps(rec.get("legalities")) if rec.get("legalities") else ""),
         "Procurement Method": ms(rec.get("procurement") or []),
         "Oracle Name": rt(rec.get("oracle_raw","")),
         "FF Name": rt(rec.get("ff_raw","")),
