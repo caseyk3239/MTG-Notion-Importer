@@ -7,9 +7,10 @@ if PARENT not in sys.path: sys.path.insert(0, PARENT)
 import streamlit as st
 from typing import Dict, Any
 import json
+import pandas as pd
 
 from mtg_importer.notion_api import NotionClient
-from mtg_importer.scry import fetch_set, normalize
+from mtg_importer.scry import fetch_set, search_prints, normalize
 from mtg_importer.util import format_title
 
 st.set_page_config(page_title="MTG Notion Importer", page_icon="🗂️", layout="centered")
@@ -104,6 +105,79 @@ def verify(notion: NotionClient, parent: str) -> bool:
 # UI
 tab = st.container()
 with tab:
+    st.subheader("Select one or more prints")
+    with st.form("search_prints_form"):
+        p_token = st.text_input("Notion API token", type="password", help="ntn_*", key="p_token")
+        p_parent = st.text_input("Parent page ID", value="250e0945-9e39-80fc-a408-c7d09ab28763", key="p_parent")
+        p_db_title = st.text_input("Database title", value="MTG – Cards", key="p_db_title")
+        p_title_style = st.selectbox("Title style", ["Oracle — FF","FF — Oracle","Oracle only"], index=0, key="p_title_style")
+        p_update_existing = st.checkbox("Update existing pages", value=True, key="p_update_existing")
+        card_name = st.text_input("Card name", key="p_card_name")
+        setcode = st.text_input("Set code", key="p_setcode")
+        fetch_prints = st.form_submit_button("Fetch prints")
+
+    if fetch_prints:
+        prints_raw = search_prints(card_name, setcode or None)
+        prints = [normalize(p) for p in prints_raw]
+        prints = sorted(prints, key=lambda r: r.get("released_at", ""), reverse=True)
+        st.session_state["prints_params"] = {
+            "prints": prints,
+            "token": p_token,
+            "parent_id": p_parent,
+            "db_title": p_db_title,
+            "title_style": p_title_style,
+            "update_existing": p_update_existing,
+        }
+
+    params = st.session_state.get("prints_params")
+    if params:
+        prints = params["prints"]
+        df = pd.DataFrame([
+            {
+                "id": r.get("id"),
+                "Select": False,
+                "Image": (r.get("image_urls") or [""])[0],
+                "Set": r.get("set"),
+                "Collector #": r.get("collector_number"),
+                "Rarity": r.get("rarity"),
+                "Released": r.get("released_at"),
+            }
+            for r in prints
+        ]).set_index("id")
+        edited = st.data_editor(
+            df,
+            hide_index=True,
+            column_config={"Image": st.column_config.ImageColumn("Image")},
+        )
+        if st.button("Insert selected prints"):
+            selected_ids = [idx for idx, row in edited.iterrows() if row.get("Select")]
+            chosen = [p for p in prints if p.get("id") in selected_ids]
+            if not chosen:
+                st.warning("No prints selected.")
+            else:
+                notion = NotionClient(params["token"])
+                if verify(notion, params["parent_id"]):
+                    db = ensure_db(notion, params["parent_id"], params["db_title"])
+                    title_prop = notion.get_title_property_name(db["id"])
+                    created = updated = skipped = failed = 0
+                    for rec in chosen:
+                        new_title = format_title(rec.get("oracle_raw", ""), rec.get("ff_raw", ""), params["title_style"])
+                        try:
+                            existing = notion.query_by_card_id(db["id"], rec["id"])
+                            if existing:
+                                if params["update_existing"]:
+                                    notion.update_card_minimal(existing["id"], props_update(notion, title_prop, new_title, rec))
+                                    updated += 1
+                                else:
+                                    skipped += 1
+                            else:
+                                notion.create_card_page(db["id"], props_create(notion, rec, title_prop, new_title))
+                                created += 1
+                        except Exception:
+                            failed += 1
+                    st.success(f"created={created} updated={updated} skipped={skipped} failed={failed}")
+                    st.info(f"Database: {db.get('url')}")
+
     st.subheader("Import sets (UPSERT)")
     with st.form("run_sets_form"):
         token = st.text_input("Notion API token", type="password", help="ntn_*")
