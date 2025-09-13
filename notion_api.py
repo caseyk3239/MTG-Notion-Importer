@@ -162,3 +162,50 @@ class NotionClient:
             r = requests.patch(f"{NOTION}/pages/{page_id}", headers=self.h, data=json.dumps(body), timeout=60)
         r.raise_for_status()
         return True
+
+    # deck helpers
+    def ensure_relation(self, db_id: str, prop: str, other_db_id: str):
+        r = requests.get(f"{NOTION}/databases/{db_id}", headers=self.h, timeout=60)
+        r.raise_for_status()
+        props = r.json().get("properties", {})
+        if prop in props and props[prop].get("type") == "relation":
+            return
+        body = {"properties": {prop: {"relation": {"database_id": other_db_id}}}}
+        pr = requests.patch(f"{NOTION}/databases/{db_id}", headers=self.h, data=json.dumps(body), timeout=60)
+        pr.raise_for_status()
+
+    def ensure_decks_db(self, parent_id: str, title: str, card_db_id: str) -> Dict[str, Any]:
+        db = self.search_db_by_title(title)
+        if not db:
+            props = {"Name": {"title": {}}, "Cards": {"relation": {"database_id": card_db_id}}}
+            body = {
+                "parent": {"type": "page_id", "page_id": parent_id},
+                "title": [{"type": "text", "text": {"content": title}}],
+                "properties": props,
+            }
+            r = requests.post(f"{NOTION}/databases", headers=self.h, data=json.dumps(body), timeout=60)
+            r.raise_for_status()
+            j = r.json()
+            db = {"id": j["id"], "url": j.get("url")}
+        self.ensure_relation(card_db_id, "Decks", db["id"])
+        self.ensure_relation(db["id"], "Cards", card_db_id)
+        return db
+
+    def create_deck_page(self, deck_db_id: str, name: str) -> str:
+        body = {
+            "parent": {"database_id": deck_db_id},
+            "properties": {"Name": {"title": [{"type": "text", "text": {"content": name}}]}},
+        }
+        r = requests.post(f"{NOTION}/pages", headers=self.h, data=json.dumps(body), timeout=60)
+        r.raise_for_status()
+        return r.json().get("id")
+
+    def add_relation(self, page_id: str, prop: str, ids: List[str]):
+        """Append relation IDs to a page property."""
+        page = requests.get(f"{NOTION}/pages/{page_id}", headers=self.h, timeout=60)
+        page.raise_for_status()
+        existing = [r.get("id") for r in page.json().get("properties", {}).get(prop, {}).get("relation", [])]
+        all_ids = existing + [i for i in ids if i not in existing]
+        body = {"properties": {prop: {"relation": [{"id": i} for i in all_ids]}}}
+        r = requests.patch(f"{NOTION}/pages/{page_id}", headers=self.h, data=json.dumps(body), timeout=60)
+        r.raise_for_status()

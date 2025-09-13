@@ -5,16 +5,20 @@ PARENT = os.path.dirname(ROOT)
 if PARENT not in sys.path: sys.path.insert(0, PARENT)
 
 import streamlit as st
-from typing import Dict, Any
+from typing import Dict, Any, List
 import json
+import pandas as pd
 
 from mtg_importer.notion_api import NotionClient
 from mtg_importer.scry import fetch_set, normalize
 from mtg_importer.util import format_title
+from mtg_importer.decklist import parse_decklist, identify_cards
 
 st.set_page_config(page_title="MTG Notion Importer", page_icon="🗂️", layout="centered")
 st.title("MTG – Notion Importer (Shared DB)")
-st.caption("UPSERT into one shared database. Existing pages: minimal update (Title, Procurement, Oracle/FF names, CN Sort). New pages: full create.")
+st.caption(
+    "UPSERT into one shared database. Existing pages: minimal update (Title, Procurement, Oracle/FF names, CN Sort). New pages: full create."
+)
 
 def props_create(notion: NotionClient, rec: Dict[str, Any], title_prop: str, title_text: str) -> Dict[str, Any]:
     def rt(v): return {"rich_text":[{"type":"text","text":{"content":v}}]} if v else {"rich_text":[]}
@@ -102,15 +106,16 @@ def verify(notion: NotionClient, parent: str) -> bool:
     return True
 
 # UI
-tab = st.container()
-with tab:
+tab_sets, tab_decks = st.tabs(["Import sets", "Decks"])
+
+with tab_sets:
     st.subheader("Import sets (UPSERT)")
     with st.form("run_sets_form"):
         token = st.text_input("Notion API token", type="password", help="ntn_*")
         parent_id = st.text_input("Parent page ID", value="250e0945-9e39-80fc-a408-c7d09ab28763")
         sets_str = st.text_input("Set codes (space-separated)", value="fca")
         db_title = st.text_input("Database title", value="MTG – Cards")
-        title_style = st.selectbox("Title style", ["Oracle — FF","FF — Oracle","Oracle only"], index=0)
+        title_style = st.selectbox("Title style", ["Oracle — FF", "FF — Oracle", "Oracle only"], index=0)
         update_existing = st.checkbox("Update existing pages", value=True)
         submitted = st.form_submit_button("Run import")
 
@@ -133,7 +138,7 @@ with tab:
 
                 for item in cards:
                     rec = normalize(item)
-                    new_title = format_title(rec.get("oracle_raw",""), rec.get("ff_raw",""), title_style)
+                    new_title = format_title(rec.get("oracle_raw", ""), rec.get("ff_raw", ""), title_style)
                     try:
                         existing = notion.query_by_card_id(db["id"], rec["id"])
                         if existing:
@@ -141,7 +146,7 @@ with tab:
                                 notion.update_card_minimal(existing["id"], props_update(notion, title_prop, new_title, rec))
                                 updated += 1
                                 if len(sample) < 10:
-                                    sample.append(f'{u}-{rec.get("collector_number","?")}: → {new_title}')
+                                    sample.append(f'{u}-{rec.get("collector_number", "?")}: → {new_title}')
                             else:
                                 skipped += 1
                         else:
@@ -150,14 +155,69 @@ with tab:
                     except Exception as e:
                         failed += 1
                         if len(sample) < 10:
-                            sample.append(f'ERROR {u}-{rec.get("collector_number","?")}: {e}')
+                            sample.append(f'ERROR {u}-{rec.get("collector_number", "?")}: {e}')
 
                 st.info(f"[{u}] created={created} updated={updated} skipped={skipped} failed={failed}")
-                total_created += created; total_updated += updated; total_skipped += skipped; total_failed += failed
+                total_created += created
+                total_updated += updated
+                total_skipped += skipped
+                total_failed += failed
 
             if sample:
                 st.markdown("**Preview (first changes):**\n\n- " + "\n- ".join(sample))
             if total_failed:
                 st.warning("Some items failed; see preview list above.")
-            st.success(f"Totals — created={total_created} updated={total_updated} skipped={total_skipped} failed={total_failed}")
+            st.success(
+                f"Totals — created={total_created} updated={total_updated} skipped={total_skipped} failed={total_failed}"
+            )
             st.info(f"Database: {db.get('url')}")
+
+with tab_decks:
+    st.subheader("Import deck list")
+    with st.form("deck_form"):
+        token_d = st.text_input("Notion API token", type="password", key="deck_token")
+        parent_id_d = st.text_input("Parent page ID", key="deck_parent")
+        card_db_id = st.text_input("Card database ID", key="deck_card_db")
+        decks_title = st.text_input("Decks database title", value="MTG – Decks")
+        uploaded = st.file_uploader("Deck list file", type=["txt", "md"])
+        deck_name = st.text_input("Deck name", value="")
+        preview = st.form_submit_button("Preview")
+
+    if preview and uploaded:
+        text = uploaded.read().decode("utf-8")
+        default_name = deck_name or os.path.splitext(uploaded.name)[0]
+        items = identify_cards(parse_decklist(text))
+        st.session_state["deck_preview"] = items
+        st.session_state["deck_name"] = default_name
+        df = pd.DataFrame(
+            [
+                {
+                    "qty": it["count"],
+                    "name": it["name"],
+                    "set": (it["card"] or {}).get("set"),
+                    "cn": (it["card"] or {}).get("collector_number"),
+                    "section": it["section"],
+                }
+                for it in items
+            ]
+        )
+        st.dataframe(df)
+
+    if st.session_state.get("deck_preview"):
+        if st.button("Tag cards in Notion"):
+            notion = NotionClient(token_d)
+            if verify(notion, parent_id_d):
+                deck_db = notion.ensure_decks_db(parent_id_d, decks_title, card_db_id)
+                deck_page = notion.create_deck_page(deck_db["id"], st.session_state.get("deck_name", "Deck"))
+                card_ids: List[str] = []
+                for it in st.session_state.get("deck_preview", []):
+                    rec = it.get("card")
+                    if not rec:
+                        continue
+                    existing = notion.query_by_card_id(card_db_id, rec["id"])
+                    if existing:
+                        notion.add_relation(existing["id"], "Decks", [deck_page])
+                        card_ids.append(existing["id"])
+                if card_ids:
+                    notion.add_relation(deck_page, "Cards", card_ids)
+                st.success("Deck tagging complete")
