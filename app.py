@@ -12,8 +12,20 @@ from mtg_importer.scry import fetch_set, normalize
 from mtg_importer.util import format_title
 
 st.set_page_config(page_title="MTG Notion Importer", page_icon="🗂️", layout="centered")
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #ff7;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("MTG – Notion Importer (Shared DB)")
-st.caption("UPSERT into one shared database. Existing pages: minimal update (Title, Procurement, Oracle/FF names, CN Sort). New pages: full create.")
+st.caption(
+    "UPSERT into one shared database. Existing pages: minimal update (Title, Procurement, Oracle/FF names, CN Sort). New pages: full create."
+)
 
 def props_create(rec: Dict[str, Any], title_prop: str, title_text: str) -> Dict[str, Any]:
     def rt(v): return {"rich_text":[{"type":"text","text":{"content":v}}]} if v else {"rich_text":[]}
