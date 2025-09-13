@@ -30,3 +30,21 @@ cd "<the folder you unzipped>"
 chmod +x "Run MTG Notion Importer.command"
 ./"Run MTG Notion Importer.command"
 ```
+
+## Add individual cards
+You can insert a single card into your Notion database from the web app or the terminal.
+
+### Web app
+Run `streamlit run mtg_importer/app.py` and open the **Add single card** tab.
+Search for a card name (optionally restricting to a set), preview the prints and
+their images, then insert the selected print into your database.
+
+### Command line
+```bash
+python -m mtg_importer.cli add-card "Black Lotus" --db-title "MTG – Cards" --parent <PAGE_ID> --token <NOTION_TOKEN>
+```
+
+The CLI searches Scryfall for matching prints and displays a numbered preview
+with the set code, collector number, rarity and image URL. Choose the desired
+print and confirm to create the page. Use `--dry-run` to preview without writing
+to Notion.
